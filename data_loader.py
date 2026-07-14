@@ -8,9 +8,8 @@ import requests
 import zipfile
 import io
 
-from evidently import ColumnMapping
-from evidently.report import Report
-from evidently.metrics import DatasetMissingValuesMetric, DatasetDriftMetric, DatasetSummaryMetric
+from evidently import Report
+from evidently.metrics import DatasetMissingValueCount, DriftedColumnsCount, AlmostDuplicatedColumnsCount
 
 import psycopg
 
@@ -31,9 +30,9 @@ begin = datetime.datetime(2011,1,20,0,0)
 end = datetime.datetime(2011,1,20,23,59)
 
 report = Report(metrics=[
-    DatasetMissingValuesMetric(), 
-    DatasetDriftMetric(), 
-    DatasetSummaryMetric()
+    DatasetMissingValueCount(),
+    DriftedColumnsCount(),
+    AlmostDuplicatedColumnsCount(),
 ])
 
 create_table_statement = """
@@ -57,12 +56,16 @@ def prep_db():
 
 def calculate_metrics_postgresql(i, curr):
     current_data = raw_data[begin + datetime.timedelta(i) : end + datetime.timedelta(i)]
-    report.run(reference_data=reference_data, current_data=current_data)
-    result = report.as_dict()
 
-    drift = result['metrics'][1]['result']['number_of_drifted_columns']
-    duplicated_cols = result['metrics'][2]['result']['current']['number_of_almost_duplicated_columns']
-    missing_values = result['metrics'][0]['result']['number_of_missing_values']
+    snapshot = report.run(reference_data=reference_data, current_data=current_data)
+
+    # DriftedColumnsCount and DatasetMissingValueCount are CountValue metrics
+    # and return 2 values: "count" and "share"
+    drift = snapshot.metric_results[DriftedColumnsCount().metric_id].count.value
+    missing_values = snapshot.metric_results[DatasetMissingValueCount().metric_id].count.value
+
+    # AlmostDuplicatedColumnsCount is SingleValue and returns its value directly
+    duplicated_cols = snapshot.metric_results[AlmostDuplicatedColumnsCount().metric_id].value
     
     curr.execute(
         "insert into metric_name(timestamp, number_of_drifted_columns, number_of_almost_duplicated_columns, number_of_missing_values) values (%s, %s, %s, %s)",
